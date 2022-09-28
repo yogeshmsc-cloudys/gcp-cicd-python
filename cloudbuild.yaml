@@ -1,0 +1,50 @@
+steps:
+  - id: 'get-security-scans'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: 
+      - '-c'
+      - |
+        docker create --name security-scans ${_ARTIFACT_REG}/$PROJECT_ID/docker/security-scans:latest
+        docker cp security-scans:/my-workspace/security-scans-python.yaml .
+        docker rm security-scans
+
+  - id: 'run-security-scans'
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['get-security-scans']
+    entrypoint: 'bash'
+    args: 
+      - '-c'
+      - |
+        gcloud builds submit --config=./security-scans-python.yaml . --substitutions=_REPO_NAME=${_SERVICE_NAME}
+
+  - id: 'build-image'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['run-security-scans']
+    args : ['build', '.', '-t', '${_ARTIFACT_REG}/${PROJECT_ID}/docker/${_SERVICE_NAME}:latest']
+
+  - id: 'push-image'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-image']
+    args: ['push', '${_ARTIFACT_REG}/${PROJECT_ID}/docker/${_SERVICE_NAME}']
+
+  - id: 'deploy'
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-image']
+    args: ['run', 'deploy', '${_SERVICE_NAME}',
+    '--image', '${_ARTIFACT_REG}/${PROJECT_ID}/docker/${_SERVICE_NAME}:latest',
+    '--region', 'europe-west2',
+    '--platform', 'managed',
+    '--allow-unauthenticated',
+    '--update-labels', 'service-tag=${_SERVICE_NAME}',
+    '--memory', '256Mi',
+    '--max-instances', '1',
+    '--cpu', '1'
+    ]
+
+substitutions:
+    _SERVICE_NAME: 'gcp-cicd-python'
+    _ARTIFACT_REG: 'europe-west2-docker.pkg.dev'
+    
+tags: ['build', '${_SERVICE_NAME}', '${_TAG}']
